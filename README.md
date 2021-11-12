@@ -15,12 +15,6 @@
 [Create project and enable api](https://developers.google.com/workspace/guides/create-project)
 [Create credentials](https://developers.google.com/workspace/guides/create-credentials)
 
-- Create db file
-
-  ```bash
-  $ touch db.json
-  ```
-
 ## Run script
 
 ```bash
