@@ -25,6 +25,15 @@ DOCUMENTS_PATH = config['documents_path']
 RECPIENT = config['recipient']
 BODY = config['body']
 
+puts '|-----------------------------------------------------------------------------------------|'
+puts '| Please check if configs correct, if configs correct press Enter, else stop sript        |'
+puts '| Пожалуйста проверьте настройки и нажмите Enter, если обнаружили ошибку остановите скрипт|'
+puts '|-----------------------------------------------------------------------------------------|'
+puts "body: #{BODY}"
+puts "recipient: #{RECPIENT}"
+puts "path to documents: #{DOCUMENTS_PATH}"
+gets
+
 OOB_URI = 'urn:ietf:wg:oauth:2.0:oob'
 APPLICATION_NAME = 'Send emails with attachment'
 CREDENTIALS_PATH = 'credentials.json'
