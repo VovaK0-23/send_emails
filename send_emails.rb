@@ -117,8 +117,6 @@ def send_mail(subject, path, body)
   end
 end
 
-file = File.read('db.json')
-data = JSON.parse(file)
 pwd = ''
 arr = []
 FileUtils.cd(DOCUMENTS_PATH) do
@@ -136,7 +134,17 @@ FileUtils.cd(DOCUMENTS_PATH) do
     filepath = File.join(Dir.pwd, filename)
     pwd = Dir.pwd
     arr << [subject, filepath, filename, body]
+def set_initial_data
+  if File.file?('db.json')
+    return data = {} if File.zero?('db.json')
+
+    file = File.read('db.json')
+    data = JSON.parse(file)
+  else
+    FileUtils.touch('db.json')
+    data = {}
   end
+  data
 end
 
 arr.each do |email|
