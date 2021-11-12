@@ -117,23 +117,6 @@ def send_mail(subject, path, body)
   end
 end
 
-pwd = ''
-arr = []
-FileUtils.cd(DOCUMENTS_PATH) do
-  data[Dir.pwd] = {} if data[Dir.pwd].nil?
-  filenames = Dir.entries('.').select { |f| f.include?('.pdf') }
-  filenames.each do |filename|
-    reader = PDF::Reader.new(filename)
-    str = reader.pages.first.text[0...26].gsub("\n", ' ').squeeze(' ')
-    body = "#{str}\n" if str.include? 'Faktura'
-
-    data[Dir.pwd][filename] = { 'send' => 'false' } if data[Dir.pwd][filename].nil?
-    next if data[Dir.pwd][filename]['send'] == 'true'
-
-    subject = File.basename(filename, '.pdf')
-    filepath = File.join(Dir.pwd, filename)
-    pwd = Dir.pwd
-    arr << [subject, filepath, filename, body]
 def set_initial_data
   if File.file?('db.json')
     return data = {} if File.zero?('db.json')
@@ -147,13 +130,47 @@ def set_initial_data
   data
 end
 
-arr.each do |email|
-  send_mail(email[0], email[1], email[3])
-rescue => e
-  puts e.message
-else
-  puts "#{email[3]}Email successfuly send"
-  data[pwd][email[2]]['send'] = 'true'
+def pdf_body(filepath)
+  reader = PDF::Reader.new(filepath)
+  str = reader.pages.first.text[0...26].gsub("\n", ' ').squeeze(' ')
+  str.include?('Faktura') ? "#{str}\n" : ''
 end
-p data
+
+def filenames_array
+  FileUtils.cd(DOCUMENTS_PATH) do
+    return Dir.entries('.').select { |f| f.include?('.pdf') }
+  end
+end
+
+def file_sent?(data, filename)
+  data[DOCUMENTS_PATH][filename] = {} if data[DOCUMENTS_PATH][filename].nil?
+  data[DOCUMENTS_PATH][filename]['sent'] = 'false' if data[DOCUMENTS_PATH][filename]['sent'].nil?
+  data[DOCUMENTS_PATH][filename]['sent']
+end
+
+def create_emails_array(data)
+  filenames_array.map do |filename|
+    next if file_sent?(data, filename) == 'true'
+
+    {
+      subject: File.basename(filename, '.pdf'),
+      filepath: File.join(DOCUMENTS_PATH, filename),
+      filename: filename,
+      body: pdf_body(File.join(DOCUMENTS_PATH, filename))
+    }
+  end
+end
+
+data = set_initial_data
+data[DOCUMENTS_PATH] = {} if data[DOCUMENTS_PATH].nil?
+
+emails = create_emails_array(data)
+emails.compact.each do |email|
+  send_mail(email[:subject], email[:filepath], email[:body])
+  puts "#{email[:body]}Email #{email[:filename]} successfuly send"
+  data[DOCUMENTS_PATH][email[:filename]]['faktura'] = email[:body].gsub("\n", '')
+  data[DOCUMENTS_PATH][email[:filename]]['sent'] = 'true'
+end
+
+puts JSON.pretty_generate(data)
 File.write('db.json', JSON.dump(data))
