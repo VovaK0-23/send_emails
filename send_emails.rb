@@ -4,7 +4,7 @@ require 'bundler/inline'
 
 gemfile do
   source 'https://rubygems.org'
-  ruby '>= 3.0.0'
+  ruby '>= 2.7.0'
   gem 'google-api-client'
   gem 'mail'
   gem 'json'
