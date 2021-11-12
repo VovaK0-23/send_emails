@@ -1,0 +1,5 @@
+{
+  "documents_path": "/path/to/folder/with/files",
+  "recipient": "recipient@email.com",
+  "body": "email body"
+}
