@@ -41,136 +41,159 @@ TOKEN_PATH = 'token.yaml'
 USER_ID = 'default'
 SCOPE = Google::Apis::GmailV1::AUTH_GMAIL_COMPOSE
 
-def authorize
-  client_id = Google::Auth::ClientId.from_file(CREDENTIALS_PATH)
-  token_store = Google::Auth::Stores::FileTokenStore.new(file: TOKEN_PATH)
-  authorizer = Google::Auth::UserAuthorizer.new(client_id, SCOPE, token_store)
-  begin
-    credentials = authorizer.get_credentials(USER_ID)
-  rescue RuntimeError
-    authorizer, credentials = handle_token_error(client_id)
+class Authorizer
+  attr_reader :service
+
+  def initialize
+    @service = Google::Apis::GmailV1::GmailService.new
+    @client_id = Google::Auth::ClientId.from_file(CREDENTIALS_PATH)
   end
-  credentials = authorize_with_code(authorizer) if credentials.nil?
-  credentials
-end
 
-def handle_token_error(client_id)
-  puts '|-----------------------------------------------------------------------------------------|'
-  puts '| Sorry file token.yaml has invalid code, you will be prompted to authorize               |'
-  puts '| Извините файл token.yaml содержит не правильный код, пройдите авторизацию ещё раз       |'
-  puts '|-----------------------------------------------------------------------------------------|'
-  File.delete(TOKEN_PATH)
-  token_store = Google::Auth::Stores::FileTokenStore.new(file: TOKEN_PATH)
-  authorizer = Google::Auth::UserAuthorizer.new(client_id, SCOPE, token_store)
-  [authorizer, nil]
-end
-
-def authorize_with_code(authorizer)
-  url = authorizer.get_authorization_url base_url: OOB_URI
-  authorize_with_code_message(url)
-  begin
-    code = gets.chomp
-    credentials = authorizer.get_and_store_credentials_from_code(user_id: USER_ID, code: code, base_url: OOB_URI)
-  rescue Signet::AuthorizationError => e
-    puts e.message, 'Try one more time (Попробуйте ещё раз):'
-    retry
+  def initialize_api
+    @service.client_options.application_name = APPLICATION_NAME
+    @service.authorization = authorize
   end
-  credentials
+
+  private
+
+  def authorize
+    begin
+      retries ||= 0
+      token_store = Google::Auth::Stores::FileTokenStore.new(file: TOKEN_PATH)
+      authorizer = Google::Auth::UserAuthorizer.new(@client_id, SCOPE, token_store)
+      credentials = authorizer.get_credentials(USER_ID)
+    rescue RuntimeError
+      File.delete(TOKEN_PATH)
+      retry if (retries += 1) < 2
+    end
+    credentials.nil? ? authorize_with_code(authorizer) : credentials
+  end
+
+  def authorize_with_code(authorizer)
+    url = authorizer.get_authorization_url base_url: OOB_URI
+    authorize_with_code_message(url)
+    begin
+      code = gets.chomp
+      credentials = authorizer.get_and_store_credentials_from_code(user_id: USER_ID, code: code, base_url: OOB_URI)
+    rescue Signet::AuthorizationError
+      puts 'Try one more time, code incorrect (Попробуйте ещё раз, код не правильный):'
+      retry
+    end
+    credentials
+  end
+
+  def authorize_with_code_message(url)
+    puts '|-----------------------------------------------------------------------------------------|'
+    puts '| Open the following URL in the browser and enter the resulting code after authorization: |'
+    puts '| Откройте ссылку в браузере и введите код который получите после авторизации:            |'
+    puts '|-----------------------------------------------------------------------------------------|'
+    puts ''
+    puts url
+    puts ''
+    puts 'Enter code (Введите код):'
+  end
 end
 
-def authorize_with_code_message(url)
-  puts '|-----------------------------------------------------------------------------------------|'
-  puts '| Open the following URL in the browser and enter the resulting code after authorization: |'
-  puts '| Откройте ссылку в браузере и введите код который получите после авторизации:            |'
-  puts '|-----------------------------------------------------------------------------------------|'
-  puts ''
-  puts url
-  puts ''
-  puts 'Enter code (Введите код):'
-end
+class Email
+  attr_reader :filename, :body
 
-def initialize_api
-  service = Google::Apis::GmailV1::GmailService.new
-  service.client_options.application_name = APPLICATION_NAME
-  service.authorization = authorize
-  service
-end
+  def initialize(filename)
+    @filename = filename
+    @filepath = File.join(DOCUMENTS_PATH, filename)
+    @body = create_body
+  end
 
-def create_email(subject, path, body)
-  message = Mail.new
-  message.header['To'] = RECPIENT
-  message.header['Subject'] = subject
-  message.body = body + BODY
-  message.charset = 'UTF-8'
-  message.add_file(path)
-  Google::Apis::GmailV1::Message.new(raw: message.to_s)
-end
-
-def send_mail(subject, path, body)
-  user_id = 'me'
-  message = create_email(subject, path, body)
-  service = initialize_api
-  begin
-    service.send_user_message(user_id, message)
+  def send_mail(authorizer)
+    retries ||= 0
+    service = authorizer.service
+    service.send_user_message('me', create_message)
   rescue Google::Apis::AuthorizationError
-    puts 'Authorization error, please try again'
+    File.delete(TOKEN_PATH)
+    authorizer.initialize_api
+    retry if (retries += 1) < 2
+  end
+
+  private
+
+  def create_message
+    message = Mail.new
+    message.header['To'] = RECPIENT
+    message.header['Subject'] = File.basename(filename, '.pdf')
+    message.body = @body + BODY
+    message.charset = 'UTF-8'
+    message.add_file(@filepath)
+    Google::Apis::GmailV1::Message.new(raw: message.to_s)
+  end
+
+  def create_body
+    reader = PDF::Reader.new(@filepath)
+    str = reader.pages.first.text[0...26].gsub("\n", ' ').squeeze(' ')
+    str.include?('Faktura') ? "#{str}\n" : ''
   end
 end
 
-def set_initial_data
-  if File.file?('db.json')
-    return data = {} if File.zero?('db.json')
+class Data
+  attr_accessor :data, :data_path
+  attr_reader :emails
 
-    file = File.read('db.json')
-    data = JSON.parse(file)
-  else
-    FileUtils.touch('db.json')
-    data = {}
+  def initialize
+    @data = initial_data
+    @data[DOCUMENTS_PATH] = @data[DOCUMENTS_PATH].nil? ? {} : @data[DOCUMENTS_PATH]
+    @data_path = @data[DOCUMENTS_PATH]
+    @emails = create_emails_array.compact
   end
-  data
-end
 
-def pdf_body(filepath)
-  reader = PDF::Reader.new(filepath)
-  str = reader.pages.first.text[0...26].gsub("\n", ' ').squeeze(' ')
-  str.include?('Faktura') ? "#{str}\n" : ''
-end
+  def show_data
+    puts JSON.pretty_generate(@data)
+  end
 
-def filenames_array
-  FileUtils.cd(DOCUMENTS_PATH) do
-    return Dir.entries('.').select { |f| f.include?('.pdf') }
+  def save_data
+    File.write('db.json', JSON.dump(@data))
+  end
+
+  private
+
+  def create_emails_array
+    filenames = Dir.entries(DOCUMENTS_PATH).select { |f| f.include?('.pdf') }
+    filenames.map do |filename|
+      file_sent(filename)
+      next if @data_path[filename]['sent'] == 'true'
+
+      Email.new(filename)
+    end
+  end
+
+  def file_sent(filename)
+    @data_path[filename] = {} if @data_path[filename].nil?
+    @data_path[filename]['sent'] = 'false' if @data_path[filename]['sent'].nil?
+  end
+
+  def initial_data
+    if File.file?('db.json')
+      return @data = {} if File.zero?('db.json')
+
+      file = File.read('db.json')
+      @data = JSON.parse(file)
+    else
+      FileUtils.touch('db.json')
+      @data = {}
+    end
   end
 end
 
-def file_sent?(data, filename)
-  data[DOCUMENTS_PATH][filename] = {} if data[DOCUMENTS_PATH][filename].nil?
-  data[DOCUMENTS_PATH][filename]['sent'] = 'false' if data[DOCUMENTS_PATH][filename]['sent'].nil?
-  data[DOCUMENTS_PATH][filename]['sent']
-end
-
-def create_emails_array(data)
-  filenames_array.map do |filename|
-    next if file_sent?(data, filename) == 'true'
-
-    {
-      subject: File.basename(filename, '.pdf'),
-      filepath: File.join(DOCUMENTS_PATH, filename),
-      filename: filename,
-      body: pdf_body(File.join(DOCUMENTS_PATH, filename))
-    }
+data_obj = Data.new
+emails = data_obj.emails
+if !emails.empty?
+  service = Authorizer.new
+  service.initialize_api
+  emails.each do |email|
+    email.send_mail(service)
+    puts "#{email.body}Email #{email.filename} successfuly send"
+    data_obj.data_path[email.filename]['faktura'] = email.body.gsub("\n", '')
+    data_obj.data_path[email.filename]['sent'] = 'true'
   end
 end
 
-data = set_initial_data
-data[DOCUMENTS_PATH] = {} if data[DOCUMENTS_PATH].nil?
-
-emails = create_emails_array(data)
-emails.compact.each do |email|
-  send_mail(email[:subject], email[:filepath], email[:body])
-  puts "#{email[:body]}Email #{email[:filename]} successfuly send"
-  data[DOCUMENTS_PATH][email[:filename]]['faktura'] = email[:body].gsub("\n", '')
-  data[DOCUMENTS_PATH][email[:filename]]['sent'] = 'true'
-end
-
-puts JSON.pretty_generate(data)
-File.write('db.json', JSON.dump(data))
+puts 'State of db:'
+data_obj.show_data
+data_obj.save_data
