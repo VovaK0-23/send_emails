@@ -132,7 +132,7 @@ class Email
   end
 end
 
-class Data
+class MyData
   attr_accessor :data, :data_path
   attr_reader :emails
 
@@ -181,7 +181,7 @@ class Data
   end
 end
 
-data_obj = Data.new
+data_obj = MyData.new
 emails = data_obj.emails
 if !emails.empty?
   service = Authorizer.new
